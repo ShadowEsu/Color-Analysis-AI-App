@@ -1,0 +1,5 @@
+{
+  "name": "ChromaQuant: Environmental Color Analyzer",
+  "description": "A quantitative color analysis system that interpolates values between reference points using light-normalized image data.",
+  "requestFramePermissions": ["camera"]
+}
