@@ -1,7 +1,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult, Region } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+
+if (!apiKey) {
+  console.warn(
+    "VITE_GEMINI_API_KEY is not set. The analysis feature will not work until this is configured."
+  );
+}
+
+const ai = new GoogleGenAI({ apiKey: apiKey || "" });
 
 export const analyzeColor = async (
   base64Image: string,

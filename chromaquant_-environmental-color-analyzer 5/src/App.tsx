@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Upload, RefreshCw, CheckCircle2, AlertCircle, Info, ChevronRight, Beaker, History, Trash2, X, Sun } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Region, AnalysisResult, HistoryItem } from './types';
@@ -89,6 +89,30 @@ export default function App() {
     }
   };
 
+  const HISTORY_STORAGE_KEY = 'chromaquant_history_v1';
+
+  const saveHistoryItem = (item: Omit<HistoryItem, 'id' | 'timestamp'>) => {
+    const existingRaw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    let existing: HistoryItem[] = [];
+    if (existingRaw) {
+      try {
+        existing = JSON.parse(existingRaw);
+      } catch {
+        existing = [];
+      }
+    }
+
+    const newItem: HistoryItem = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      ...item,
+    };
+
+    const updated = [newItem, ...existing].slice(0, 50);
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
+    setHistory(updated);
+  };
+
   const handleAnalyze = async () => {
     const missingRegions = regions.filter(r => r.width === 0);
     if (missingRegions.length > 0) {
@@ -103,21 +127,15 @@ export default function App() {
     try {
       const analysisResult = await analyzeColor(image, regions, valueA, valueB);
       setResult(analysisResult);
-      
-      // Save to history
-      await fetch('/api/history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title || `Analysis ${new Date().toLocaleTimeString()}`,
-          image,
-          regions,
-          valueA,
-          valueB,
-          result: analysisResult
-        })
+
+      saveHistoryItem({
+        title: title || `Analysis ${new Date().toLocaleTimeString()}`,
+        image,
+        regions,
+        valueA,
+        valueB,
+        result: analysisResult,
       });
-      loadHistory();
     } catch (err: any) {
       setError(err.message || "An error occurred during analysis.");
     } finally {
@@ -125,20 +143,26 @@ export default function App() {
     }
   };
 
-  const loadHistory = async () => {
+  const loadHistory = () => {
     try {
-      const res = await fetch('/api/history');
-      const data = await res.json();
-      setHistory(data);
+      const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+      if (!raw) {
+        setHistory([]);
+        return;
+      }
+      const parsed = JSON.parse(raw) as HistoryItem[];
+      setHistory(parsed);
     } catch (err) {
-      console.error("Failed to load history", err);
+      console.error("Failed to load history from localStorage", err);
+      setHistory([]);
     }
   };
 
-  const deleteHistoryItem = async (id: number) => {
+  const deleteHistoryItem = (id: number) => {
     try {
-      await fetch(`/api/history/${id}`, { method: 'DELETE' });
-      loadHistory();
+      const updated = history.filter((item) => item.id !== id);
+      setHistory(updated);
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
     } catch (err) {
       console.error("Failed to delete history item", err);
     }
