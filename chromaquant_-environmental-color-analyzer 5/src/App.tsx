@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Region, AnalysisResult, HistoryItem } from './types';
 import { RegionSelector } from './components/RegionSelector';
 import { analyzeColor } from './services/geminiService';
+import { getAverageColor } from './utils/colorSampler';
 
 const INITIAL_REGIONS: Region[] = [
   { id: 'refA', label: 'Reference A', x: 0, y: 0, width: 0, height: 0 },
@@ -89,34 +90,35 @@ export default function App() {
     }
   };
 
-  const HISTORY_STORAGE_KEY = 'chromaquant_history_v1';
-
-  const saveHistoryItem = (item: Omit<HistoryItem, 'id' | 'timestamp'>) => {
-    const existingRaw = localStorage.getItem(HISTORY_STORAGE_KEY);
-    let existing: HistoryItem[] = [];
-    if (existingRaw) {
-      try {
-        existing = JSON.parse(existingRaw);
-      } catch {
-        existing = [];
-      }
+  const loadHistory = async () => {
+    try {
+      const res = await fetch("/api/history");
+      if (!res.ok) throw new Error("Failed to fetch history");
+      const data = await res.json();
+      setHistory(
+        data.map((row: Record<string, unknown>) => ({
+          id: row.id as number,
+          timestamp: row.timestamp as string,
+          title: row.title as string,
+          image: row.image as string,
+          regions: row.regions as Region[],
+          valueA: row.valueA as number,
+          valueB: row.valueB as number,
+          result: row.result as AnalysisResult,
+        }))
+      );
+    } catch (err) {
+      console.error("Failed to load history", err);
+      setHistory([]);
     }
-
-    const newItem: HistoryItem = {
-      id: Date.now(),
-      timestamp: new Date().toISOString(),
-      ...item,
-    };
-
-    const updated = [newItem, ...existing].slice(0, 50);
-    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
-    setHistory(updated);
   };
 
   const handleAnalyze = async () => {
-    const missingRegions = regions.filter(r => r.width === 0);
+    const missingRegions = regions.filter((r) => r.width === 0);
     if (missingRegions.length > 0) {
-      setError(`Please define all regions: ${missingRegions.map(r => r.label).join(', ')}`);
+      setError(
+        `Please define all regions: ${missingRegions.map((r) => r.label).join(", ")}`
+      );
       return;
     }
 
@@ -125,17 +127,42 @@ export default function App() {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const analysisResult = await analyzeColor(image, regions, valueA, valueB);
-      setResult(analysisResult);
+      // 1. Ground truth: canvas-based pixel averaging for sampled HEX
+      const regionsWithColors = await Promise.all(
+        regions.map(async (r) => ({
+          ...r,
+          color: r.width > 0 ? await getAverageColor(image, r) : undefined,
+        }))
+      );
 
-      saveHistoryItem({
-        title: title || `Analysis ${new Date().toLocaleTimeString()}`,
+      // 2. AI spectral analysis
+      const analysisResult = await analyzeColor(
         image,
-        regions,
+        regionsWithColors,
         valueA,
-        valueB,
-        result: analysisResult,
+        valueB
+      );
+
+      // 3. Update local state
+      setResult(analysisResult);
+      setRegions(regionsWithColors);
+
+      // 4. Persist to SQLite database
+      const saveRes = await fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title || `Analysis ${new Date().toLocaleTimeString()}`,
+          image,
+          regions: regionsWithColors,
+          valueA,
+          valueB,
+          result: analysisResult,
+        }),
       });
+
+      if (!saveRes.ok) throw new Error("Failed to save to database");
+      await loadHistory();
     } catch (err: any) {
       setError(err.message || "An error occurred during analysis.");
     } finally {
@@ -143,26 +170,11 @@ export default function App() {
     }
   };
 
-  const loadHistory = () => {
+  const deleteHistoryItem = async (id: number) => {
     try {
-      const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
-      if (!raw) {
-        setHistory([]);
-        return;
-      }
-      const parsed = JSON.parse(raw) as HistoryItem[];
-      setHistory(parsed);
-    } catch (err) {
-      console.error("Failed to load history from localStorage", err);
-      setHistory([]);
-    }
-  };
-
-  const deleteHistoryItem = (id: number) => {
-    try {
-      const updated = history.filter((item) => item.id !== id);
-      setHistory(updated);
-      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
+      const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete");
+      await loadHistory();
     } catch (err) {
       console.error("Failed to delete history item", err);
     }

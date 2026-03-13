@@ -19,33 +19,30 @@ export const analyzeColor = async (
 ): Promise<AnalysisResult> => {
   const model = "gemini-3-flash-preview";
 
-  const regionDescriptions = regions.map(r => 
-    `${r.label}: x=${r.x.toFixed(2)}%, y=${r.y.toFixed(2)}%, width=${r.width.toFixed(2)}%, height=${r.height.toFixed(2)}%`
-  ).join('\n');
+  const regionDescriptions = regions
+    .map(
+      (r) =>
+        `${r.label}: Average Sampled HEX: ${r.color ?? "N/A"}. Location: x=${r.x.toFixed(1)}%, y=${r.y.toFixed(1)}%`
+    )
+    .join("\n");
 
   const prompt = `
-You are a quantitative color analysis system for environmental testing.
+You are a quantitative color analysis system for environmental testing. PRIORITIZE the ground-truth HEX values provided; do not rely on visual estimation.
 
 INPUT DATA:
-- Image provided.
-- Regions defined (as percentages of image width/height):
+- Image provided for context.
+- Regions with MATHEMATICALLY SAMPLED average HEX (from canvas pixel averaging):
 ${regionDescriptions}
 - User-provided numeric values:
   - Reference Color A (refA) = ${valueA}
   - Reference Color B (refB) = ${valueB}
 
 OBJECTIVES:
-1. REGION BOUNDARY REFINEMENT: The provided coordinates are user-defined approximations. You MUST visually inspect the image at these locations and identify the actual physical boundaries of the Reference A, Reference B, Test Color, and Control patches. Ensure your color sampling is taken from the center-most, most representative pixels of each patch, avoiding edges, shadows, or specular highlights that may occur at the boundaries.
-2. ADVANCED LIGHT NORMALIZATION:
-   - Use the 'Control (White)' patch as the absolute spectral baseline.
-   - Analyze the RGB/CMYK distribution of the white patch to estimate the ambient color temperature (e.g., "Warm 3000K", "Daylight 5500K", "Cool 7500K").
-   - Evaluate the exposure level and dynamic range. Detect if the control patch is overexposed (clipped) or underexposed.
-   - Identify local lighting artifacts such as shadows, gradients, or glares across the patches.
-   - Apply a normalization transform to the refA, refB, and test colors to remove these environmental biases.
-3. LUMINOSITY ANALYSIS: Estimate the ambient luminosity (brightness) of the environment based on the CONTROL patch's pixel intensity and the overall image exposure. Provide this as a numeric value (0-1000 lux estimate or relative percentage).
-4. COLOR COMPARISON: Perform high-precision colorimetric comparison between the normalized TEST color and the two reference endpoints (A and B). Analyze hue, saturation, and value (HSV) or LAB color space distances.
-5. PERCENTAGE POSITION: Compute pct_to_A and pct_to_B (summing to 100) representing positional proximity along the gradient between A and B.
-6. NUMERIC INTERPOLATION: Compute estimated_value = (pct_to_A / 100) * ${valueA} + (pct_to_B / 100) * ${valueB}.
+1. PRIORITIZE HEX VALUES: The provided HEX values are ground-truth pixel averages for each region. Use these as your primary data. The image is for validation only.
+2. WHITE BALANCE / NORMALIZATION: Use the 'Control' region's HEX to detect ambient light tint. Apply a white-balance shift to RefA, RefB, and Test HEX values to remove lighting bias before calculation.
+3. CIELAB DELTA-E INTERPOLATION: Convert RefA, RefB, and Test HEX values into CIELAB color space. Calculate the Delta-E (perceptual distance) of Test between RefA and RefB. Use these distances to determine percentage position: pct_to_A and pct_to_B (summing to 100).
+4. LUMINOSITY ANALYSIS: Derive ambient luminosity from the Control patch HEX intensity and overall image exposure. Provide a numeric value (0–1000 lux estimate or relative percentage).
+5. NUMERIC INTERPOLATION: Compute estimated_value = (pct_to_A / 100) * ${valueA} + (pct_to_B / 100) * ${valueB}.
 
 OUTPUT REQUIREMENTS:
 - Return JSON only.
